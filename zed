@@ -1,0 +1,111 @@
+#!/usr/bin/env bash
+# remote-zed-opener: open remote linux paths on your mac's zed editor over ssh
+set -euo pipefail
+
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
+
+# load config if present
+if [[ -f "$CONFIG_FILE" ]]; then
+  # shellcheck source=/dev/null
+  source "$CONFIG_FILE"
+fi
+
+MAC_HOST="${ZED_MAC_HOST:-${MAC_HOST:-}}"
+REMOTE_HOST="${ZED_REMOTE_HOST:-${REMOTE_HOST:-}}"
+MAC_ZED_BIN="${ZED_MAC_BIN:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
+
+show_usage() {
+  cat << 'EOF'
+remote-zed-opener - open linux files/folders in zed on your mac
+
+usage:
+  zed [path ...]       open file or folder in zed (defaults to current dir)
+  zed -n [path ...]    open in a new zed window
+  zed --setup          configure mac ssh host and remote host name
+  zed --help           show this help message
+EOF
+}
+
+setup_config() {
+  echo "--- remote-zed-opener setup ---"
+  echo "this configures how your linux box talks back to your mac."
+  echo ""
+
+  read -r -p "mac ssh host (alias in ~/.ssh/config on this linux machine) [${MAC_HOST:-macbook}]: " input_mac
+  MAC_HOST="${input_mac:-${MAC_HOST:-macbook}}"
+
+  read -r -p "remote host name (alias in ~/.ssh/config on your mac) [${REMOTE_HOST:-$(hostname)}]: " input_remote
+  REMOTE_HOST="${input_remote:-${REMOTE_HOST:-$(hostname)}}"
+
+  read -r -p "zed binary path on your mac [${MAC_ZED_BIN:-/usr/local/bin/zed}]: " input_bin
+  MAC_ZED_BIN="${input_bin:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
+
+  mkdir -p "$(dirname "$CONFIG_FILE")"
+  cat > "$CONFIG_FILE" << EOF
+MAC_HOST="$MAC_HOST"
+REMOTE_HOST="$REMOTE_HOST"
+MAC_ZED_BIN="$MAC_ZED_BIN"
+EOF
+
+  echo ""
+  echo "config saved to $CONFIG_FILE"
+  echo "testing ssh connection to $MAC_HOST..."
+  if ssh -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR "$MAC_HOST" "echo ok" >/dev/null 2>&1; then
+    echo "ssh to $MAC_HOST worked!"
+  else
+    echo "warning: ssh to $MAC_HOST failed. make sure passwordless ssh is working."
+  fi
+}
+
+if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
+  show_usage
+  exit 0
+fi
+
+if [[ "${1:-}" == "--setup" ]]; then
+  setup_config
+  exit 0
+fi
+
+if [[ -z "$MAC_HOST" || -z "$REMOTE_HOST" ]]; then
+  if [[ -t 0 ]]; then
+    setup_config
+  else
+    echo "error: remote-zed-opener is not configured." >&2
+    echo "run 'zed --setup' or set MAC_HOST and REMOTE_HOST in $CONFIG_FILE" >&2
+    exit 1
+  fi
+fi
+
+args=()
+paths=0
+
+for arg in "$@"; do
+  if [[ "$arg" == -* ]]; then
+    args+=("$arg")
+    continue
+  fi
+
+  # resolve relative path to absolute path
+  if [[ -e "$arg" ]]; then
+    abs=$(cd -- "$(dirname -- "$arg")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename -- "$arg")")
+  else
+    # path doesn't exist yet, handle gracefully
+    if [[ "$arg" == /* ]]; then
+      abs="$arg"
+    else
+      abs="$(pwd -P)/$arg"
+    fi
+  fi
+
+  args+=("ssh://${REMOTE_HOST}${abs}")
+  paths=$((paths + 1))
+done
+
+if (( paths == 0 )); then
+  args+=("ssh://${REMOTE_HOST}$(pwd -P)")
+fi
+
+remote_cmd=$(printf '%q ' "$MAC_ZED_BIN" "${args[@]}")
+
+exec ssh -o BatchMode=yes -o LogLevel=ERROR "$MAC_HOST" "$remote_cmd"
