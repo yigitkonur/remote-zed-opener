@@ -4,6 +4,23 @@ ever wanted to type `zed .` inside your ssh session on a remote linux server and
 
 yeah, me too. so i built this.
 
+---
+
+### copy to your ai prompt
+
+```text
+install and set up remote-zed-opener on this linux machine so typing `zed .` opens the current directory in zed on my macbook over ssh.
+
+1. fetch installer: curl -fsSL https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/install.sh | bash
+2. check if passwordless ssh works both ways (mac -> linux and linux -> mac).
+3. ensure mac remote login is enabled (system settings -> general -> sharing -> remote login).
+4. ask or detect mac ssh host alias (e.g. macbook) and linux ssh host alias (e.g. hetzner).
+5. save config to ~/.config/remote-zed-opener/config with MAC_HOST, REMOTE_HOST, and MAC_ZED_BIN.
+6. run `zed .` to verify it opens zed on the macbook.
+```
+
+---
+
 ## how it works
 
 1. you run `zed .` on your remote linux server
@@ -28,6 +45,24 @@ it puts `zed` inside `~/.local/bin/zed` and walks you through a 10 second intera
 
 for this magic to work, **passwordless ssh must work in BOTH directions**.
 
+### 0. enable ssh on your mac (remote login)
+
+macOS disables incoming ssh by default. you need to turn it on:
+
+1. open **System Settings** on your mac
+2. go to **General** -> **Sharing**
+3. toggle **Remote Login** to **ON**
+4. click `(i)` next to Remote Login and ensure your user account has access
+
+or just run this in your mac terminal:
+```bash
+sudo systemsetup -setremotelogin on
+```
+
+> **official guide**: see [apple's remote login guide](https://support.apple.com/guide/mac-help/allow-a-remote-computer-to-access-your-mac-mchlp1066/mac) for more info.
+
+---
+
 ### 1. mac -> linux (zed's connection)
 
 your mac needs to reach your linux box via an ssh alias without asking for a password.
@@ -46,6 +81,8 @@ test it from your mac terminal:
 ssh hetzner "echo ok"
 # should output: ok (no password prompt!)
 ```
+
+---
 
 ### 2. linux -> mac (the remote trigger)
 
@@ -68,6 +105,8 @@ ssh macbook "echo ok"
 
 > **tip**: using [tailscale](https://tailscale.com) makes this 10x easier because your mac and server get permanent stable ips no matter where your laptop is.
 
+---
+
 ### 3. zed cli on your mac
 
 make sure zed's cli is installed on your mac.
@@ -77,6 +116,8 @@ open zed on your mac, hit `cmd + shift + p`, and run:
 zed: install cli
 ```
 this creates `/usr/local/bin/zed` on your mac.
+
+---
 
 ### 4. install remote-zed-opener on linux
 
