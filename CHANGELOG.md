@@ -15,7 +15,7 @@ All notable changes to remote-zed-opener. Versions follow [semver](https://semve
 - `zed .` sent `…/dir/.`, `zed ..` sent `…/sub/..`, and top-level paths such as `zed /usr` sent `ssh://host//usr`. Paths are now resolved to clean absolute paths.
 - Paths containing `#`, `?`, `%XX`, spaces, non-ASCII or newlines (including a trailing one) could open the wrong folder, because Zed parses the argument as a URL. The path is now percent-encoded, and every byte reaches Zed intact.
 - `zed a b` failed on Zed 1.27 with "cannot open both local and ssh paths". Each path is now opened in its own call.
-- Flags that take a value (`--user-data-dir X`), `--`, `-` and `--diff` were mangled into ssh URLs. Flags are now an allowlist (`-n -a -e -w --version`); anything else exits 2 with a message.
+- Flags that take a value (`--user-data-dir X`), `--`, `-` and `--diff` were mangled into ssh URLs. Flags are now an allowlist (`-n -a -e -w --version`), `--` ends the flags so a path may start with `-`, and any other flag exits 2 with a message.
 - `MAC_ZED_BIN=~/…` broke on bash 4 and later. The tilde now expands on the Mac.
 - `zed` inside a `while read` loop swallowed the rest of the loop's input.
 - `zed --setup` wrote the answers unescaped into a config file that is sourced on every run: a `"` broke every command, and `$(…)` ran on each call. Host answers are now validated and the file is written with shell quoting. Existing config files keep working.
