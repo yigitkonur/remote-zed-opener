@@ -202,7 +202,7 @@ the linux box holds a key that logs into your mac without a password. if the box
    ```
    add `from="<linux box ip>",` in front to also pin where it may come from.
 
-the key can then only run zed with `ssh://<alias>/...` paths, the setup's connection test and the warm-up command; anything else is denied.
+the key can then only run zed with `ssh://<alias>/...` paths (or `zed --version`), the setup's `echo ok` test, and the two fixed warm-up commands (`ssh -O check <alias>` and the one that starts the master); anything else is denied.
 
 ## uninstall
 

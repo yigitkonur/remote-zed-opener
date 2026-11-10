@@ -15,7 +15,7 @@ MAC_ZED_BIN="${ZED_MAC_BIN:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
 CTL_DIR="${XDG_RUNTIME_DIR:-$HOME/.cache}/rzo"
 SSH_OPTS=(-n -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5
   -o ControlMaster=auto -o "ControlPath=$CTL_DIR/%C" -o ControlPersist=4h
-  -o ServerAliveInterval=5 -o ServerAliveCountMax=2)
+  -o ServerAliveInterval=3 -o ServerAliveCountMax=2)
 
 usage() {
   cat << 'EOF'
@@ -53,16 +53,11 @@ mac_cmd() {
   printf '%s%s' "$prefix" "${cmd% }"
 }
 
+# a stale kept-alive connection (mac slept, network changed) dies within ~9s of
+# ServerAlive; ssh then connects afresh on its own, bounded by ConnectTimeout
 run_on_mac() {
-  local rc=0 had_master=0
-  ssh -o "ControlPath=$CTL_DIR/%C" -O check -- "$MAC_HOST" 2> /dev/null && had_master=1
+  local rc=0
   mac_ssh "$1" || rc=$?
-  if ((rc == 255 && had_master)); then
-    # the kept-alive connection went stale (mac slept, network changed): drop it, retry once
-    ssh -o "ControlPath=$CTL_DIR/%C" -O exit -- "$MAC_HOST" > /dev/null 2>&1 || true
-    rc=0
-    mac_ssh "$1" || rc=$?
-  fi
   case $rc in
     0) ;;
     255) die "could not reach $MAC_HOST over ssh (is the mac awake and reachable?)" 255 ;;
@@ -120,21 +115,34 @@ require_config() {
   setup
 }
 
-# absolute path without . or .. segments; paths that don't exist yet (or carry
-# :line:col) are kept as typed under their resolved parent
+# physical path of a directory into PHYS; the x keeps trailing newlines in names
+# that $(...) would strip
+phys_dir() {
+  PHYS=$(cd -- "$1" && pwd -P && printf x)
+  PHYS=${PHYS%$'\n'x}
+}
+
+# absolute path without . or .. segments into ABS; paths that don't exist yet (or
+# carry :line:col) are kept as typed under their resolved parent
 abs_path() {
-  local p=$1 dir
+  local p=$1 dir=. base=$1
   if [[ -d $p ]]; then
-    (cd -- "$p" && pwd -P)
+    phys_dir "$p"
+    ABS=$PHYS
     return
   fi
-  dir=$(dirname -- "$p")
-  if [[ -d $dir ]]; then
-    dir=$(cd -- "$dir" && pwd -P)
-  elif [[ $p != /* ]]; then
-    dir="$(pwd -P)/$dir"
+  if [[ $p == */* ]]; then
+    dir=${p%/*} base=${p##*/}
+    [[ -n $dir ]] || dir=/
   fi
-  printf '%s/%s' "${dir%/}" "$(basename -- "$p")"
+  if [[ -d $dir ]]; then
+    phys_dir "$dir"
+    dir=$PHYS
+  elif [[ $p != /* ]]; then
+    phys_dir .
+    dir=$PHYS/$dir
+  fi
+  ABS=${dir%/}/$base
 }
 
 # zed parses the ssh:// argument as a url and percent-decodes the path, so encode
@@ -167,14 +175,18 @@ main() {
         -*) die "unsupported flag: $arg (supported: -n -a -e -w --version)" 2 ;;
       esac
     fi
-    paths+=("$(abs_path "$arg")")
+    abs_path "$arg"
+    paths+=("$ABS")
   done
 
   require_config
   if ((version)); then
     run_on_mac "$(mac_cmd --version)"
   else
-    ((${#paths[@]})) || paths=("$(pwd -P)")
+    if ((${#paths[@]} == 0)); then
+      phys_dir .
+      paths=("$PHYS")
+    fi
     # stable zed (1.27) opens one ssh:// url per call, so open each path separately
     for p in "${paths[@]}"; do
       run_on_mac "$(mac_cmd ${flags[@]+"${flags[@]}"} "ssh://${REMOTE_HOST}$(url_path "$p")")"

@@ -10,8 +10,9 @@ CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 echo "installing remote-zed-opener..."
 mkdir -p "$INSTALL_DIR"
 
-# never replace someone else's zed, e.g. the zed editor's own linux cli
-if [[ -e $TARGET ]] && ! grep -q remote-zed-opener "$TARGET"; then
+# never replace someone else's zed, e.g. the zed editor's own linux cli (or a
+# dangling link to it)
+if [[ -e $TARGET || -L $TARGET ]] && ! grep -q remote-zed-opener "$TARGET" 2> /dev/null; then
   echo "error: $TARGET exists and is not remote-zed-opener (the zed editor's own cli?)." >&2
   echo "remove it, or install elsewhere: INSTALL_DIR=/some/dir bash install.sh" >&2
   exit 1
