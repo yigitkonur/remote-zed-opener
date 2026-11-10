@@ -2,17 +2,24 @@
 # installer for remote-zed-opener
 set -euo pipefail
 
-RAW_URL="https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/zed"
+# the zed shim from the same release as this installer
+VERSION="v1.0.0"
+ZED_URL="https://github.com/yigitkonur/remote-zed-opener/releases/download/${VERSION}/zed"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 TARGET="$INSTALL_DIR/zed"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 
-echo "installing remote-zed-opener..."
+# our shim, by its header line; a page that merely mentions the name doesn't count
+is_ours() {
+  [[ $(sed -n 2p "$1" 2> /dev/null) == '# remote-zed-opener:'* ]]
+}
+
+echo "installing remote-zed-opener ${VERSION}..."
 mkdir -p "$INSTALL_DIR"
 
 # never replace someone else's zed, e.g. the zed editor's own linux cli (or a
 # dangling link to it)
-if [[ -e $TARGET || -L $TARGET ]] && ! grep -q remote-zed-opener "$TARGET" 2> /dev/null; then
+if [[ -e $TARGET || -L $TARGET ]] && ! is_ours "$TARGET"; then
   echo "error: $TARGET exists and is not remote-zed-opener (the zed editor's own cli?)." >&2
   echo "remove it, or install elsewhere: INSTALL_DIR=/some/dir bash install.sh" >&2
   exit 1
@@ -23,10 +30,15 @@ fi
 tmp=$(mktemp "$INSTALL_DIR/.zed.XXXXXX")
 trap 'rm -f "$tmp"' EXIT
 src="$(dirname -- "${BASH_SOURCE[0]:-}")/zed"
-if [[ -n ${BASH_SOURCE[0]:-} && -f $src ]] && grep -q remote-zed-opener "$src"; then
+if [[ -n ${BASH_SOURCE[0]:-} && -f $src ]] && is_ours "$src"; then
   cp "$src" "$tmp"
 else
-  curl -fsSL "$RAW_URL" -o "$tmp"
+  curl -fsSL "$ZED_URL" -o "$tmp"
+  # a captive portal or proxy page can come back as 200; never install that
+  if ! is_ours "$tmp"; then
+    echo "error: $ZED_URL did not return remote-zed-opener; nothing was changed." >&2
+    exit 1
+  fi
 fi
 chmod 755 "$tmp"
 mv -f "$tmp" "$TARGET"
