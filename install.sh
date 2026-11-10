@@ -3,7 +3,7 @@
 set -euo pipefail
 
 # the zed shim from the same release as this installer
-VERSION="v1.0.0"
+VERSION="v1.1.0"
 ZED_URL="https://github.com/yigitkonur/remote-zed-opener/releases/download/${VERSION}/zed"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
 TARGET="$INSTALL_DIR/zed"

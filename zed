@@ -2,7 +2,7 @@
 # remote-zed-opener: open linux files/folders in zed on your mac, over ssh
 set -euo pipefail
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
@@ -10,6 +10,9 @@ CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 MAC_HOST="${ZED_MAC_HOST:-${MAC_HOST:-}}"
 REMOTE_HOST="${ZED_REMOTE_HOST:-${REMOTE_HOST:-}}"
 MAC_ZED_BIN="${ZED_MAC_BIN:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
+# yes: add folders to the open zed window (-a) unless -n/-a/-e is given; zed starts
+# a new remote server for every new window, which takes a few seconds
+ADD_TO_WINDOW="${ZED_ADD_TO_WINDOW:-${ADD_TO_WINDOW:-no}}"
 
 # one multiplexed connection to the mac that stays up for 4h after the last call,
 # so only the first call pays the ssh handshake. short dir: socket paths max out near 104 bytes
@@ -28,6 +31,8 @@ usage:
   zed --help               show this help
 
 flags passed on to zed: -n/--new, -a/--add, -e/--existing, -w/--wait, --version
+with ADD_TO_WINDOW=yes in the config, folders go into the open zed window (-a)
+unless you pass -n, -a or -e yourself
 EOF
 }
 
@@ -93,12 +98,18 @@ setup() {
   ask MAC_HOST "mac ssh host (alias in ~/.ssh/config on this linux box)" "${MAC_HOST:-macbook}"
   ask REMOTE_HOST "this box's alias in ~/.ssh/config on your mac" "${REMOTE_HOST:-$HOSTNAME}"
   ask MAC_ZED_BIN "zed cli path on your mac" "$MAC_ZED_BIN"
+  ask ADD_TO_WINDOW "add new folders to the open zed window instead of a new one? it skips zed's few-second remote server start (yes/no)" "$ADD_TO_WINDOW"
   [[ $MAC_HOST =~ ^[A-Za-z0-9._@-]+$ ]] || die "invalid mac ssh host: $MAC_HOST"
   [[ $REMOTE_HOST =~ ^[A-Za-z0-9._@-]+(:[0-9]+)?$ ]] || die "invalid remote host: $REMOTE_HOST"
+  case $ADD_TO_WINDOW in
+    [yY] | [yY][eE][sS]) ADD_TO_WINDOW=yes ;;
+    [nN] | [nN][oO]) ADD_TO_WINDOW=no ;;
+    *) die "answer yes or no: $ADD_TO_WINDOW" ;;
+  esac
 
   mkdir -p "$(dirname "$CONFIG_FILE")"
-  printf 'MAC_HOST=%q\nREMOTE_HOST=%q\nMAC_ZED_BIN=%q\n' \
-    "$MAC_HOST" "$REMOTE_HOST" "$MAC_ZED_BIN" > "$CONFIG_FILE"
+  printf 'MAC_HOST=%q\nREMOTE_HOST=%q\nMAC_ZED_BIN=%q\nADD_TO_WINDOW=%q\n' \
+    "$MAC_HOST" "$REMOTE_HOST" "$MAC_ZED_BIN" "$ADD_TO_WINDOW" > "$CONFIG_FILE"
 
   echo ""
   echo "config saved to $CONFIG_FILE"
@@ -164,7 +175,7 @@ url_path() {
 }
 
 main() {
-  local flags=() paths=() arg opts_done=0 version=0 p
+  local flags=() paths=() arg opts_done=0 version=0 placed=0 p
   for arg in "$@"; do
     if ((!opts_done)); then
       case $arg in
@@ -178,7 +189,12 @@ main() {
           ;;
         --) opts_done=1 && continue ;;
         --version) version=1 && continue ;;
-        -n | --new | -a | --add | -e | --existing | -w | --wait) flags+=("$arg") && continue ;;
+        -n | --new | -a | --add | -e | --existing)
+          flags+=("$arg")
+          placed=1
+          continue
+          ;;
+        -w | --wait) flags+=("$arg") && continue ;;
         -*) die "unsupported flag: $arg (supported: -n -a -e -w --version)" 2 ;;
       esac
     fi
@@ -187,6 +203,9 @@ main() {
   done
 
   require_config
+  if [[ $ADD_TO_WINDOW == yes ]] && ((!placed)); then
+    flags=(-a ${flags[@]+"${flags[@]}"})
+  fi
   if ((version)); then
     run_on_mac "$(mac_cmd --version)"
   else

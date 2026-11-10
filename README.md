@@ -20,6 +20,7 @@ you are on the linux box and cannot change the mac: ask me to do the mac steps.
    MAC_HOST=<the mac's alias on this box>
    REMOTE_HOST=<this box's alias on the mac>
    MAC_ZED_BIN=/usr/local/bin/zed
+   ADD_TO_WINDOW=no   # yes: open folders in the zed window that's already open (faster)
 5. run `zed .` and ask me whether zed opened the folder on my mac.
 ```
 
@@ -47,7 +48,24 @@ both ssh hops are kept warm, so only the first open of the day pays for an ssh l
   ```
 
   without a `ControlPath` for the host, nothing extra is opened.
-- **zed itself**: a folder that's already open just gets focus. a new folder opens a new window, and zed starts a fresh remote server for every new window. `zed -a` adds the folder to the open window instead.
+- **zed itself**: a folder that's already open just gets focus. a new folder opens a new window, which takes a few seconds (see below).
+
+## why does a new zed window take a few seconds?
+
+nothing is broken, it's how zed's remote development works. measured on our setup with both ssh hops already warm:
+
+- **~1 s**: zed checks the remote (os, shell, home dir). skipped when a window on the same host is already open, because zed reuses that connection.
+- **~2 s**, shown as "starting proxy": zed starts a new `zed-remote-server` for every window and [shuts it down when the window closes](https://github.com/zed-industries/zed/blob/v1.27.0/crates/remote_server/src/headless_project.rs#L1352-L1364). there's no setting to keep it running, and zed won't attach to a server started some other way: a new proxy [stops an existing server with the same id](https://github.com/zed-industries/zed/blob/v1.27.0/crates/remote_server/src/server.rs#L987-L1005) and starts a fresh one.
+
+the workaround is to skip the new window and add the folder to the window that's already open. there's no server to start then, so it opens right away:
+
+- once: `zed -a path`
+- always: answer `yes` to "add new folders to the open zed window" in `zed --setup` (or set `ADD_TO_WINDOW=yes`). `zed -n path` still opens a new window when you want one.
+
+two more things keep it quick:
+
+- close zed windows whose connection died. reopening that folder starts everything from scratch.
+- if you also run big `scp`/`rsync` transfers to the same host with the same `ControlPath`, give zed its own alias on the mac (with its own `ControlPath`). otherwise zed's small messages wait behind the transfer.
 
 ## TL;DR install
 
@@ -57,9 +75,9 @@ run this on your remote linux server:
 curl -fsSL https://github.com/yigitkonur/remote-zed-opener/releases/latest/download/install.sh | bash
 ```
 
-it installs the latest [release](https://github.com/yigitkonur/remote-zed-opener/releases) to `~/.local/bin/zed` and asks three setup questions on your terminal (an existing config is kept). run the same command again to upgrade. it refuses to overwrite a `zed` that isn't this script, such as the zed editor's own linux cli.
+it installs the latest [release](https://github.com/yigitkonur/remote-zed-opener/releases) to `~/.local/bin/zed` and asks four setup questions on your terminal (an existing config is kept). run the same command again to upgrade. it refuses to overwrite a `zed` that isn't this script, such as the zed editor's own linux cli.
 
-to pin a version, swap `latest/download` for `download/v1.0.0`. what changed in each release: [CHANGELOG.md](CHANGELOG.md).
+to pin a version, swap `latest/download` for `download/v1.1.0`. what changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -146,10 +164,11 @@ run the installer on your linux box:
 curl -fsSL https://github.com/yigitkonur/remote-zed-opener/releases/latest/download/install.sh | bash
 ```
 
-it asks three questions:
+it asks four questions:
 - **mac ssh host**: `macbook` (the alias from step 2)
 - **this box's alias on your mac**: `hetzner` (the alias from step 1)
 - **zed cli path on your mac**: `/usr/local/bin/zed` (step 3)
+- **add new folders to the open zed window**: `no` keeps zed's normal new-window behaviour; `yes` is faster (see [why does a new zed window take a few seconds?](#why-does-a-new-zed-window-take-a-few-seconds))
 
 config lives in `~/.config/remote-zed-opener/config`. run `zed --setup` to change it.
 
@@ -182,11 +201,12 @@ flags passed on to zed: `-n/--new`, `-a/--add`, `-e/--existing`, `-w/--wait`, `-
 
 ## configuration
 
-`~/.config/remote-zed-opener/config` holds `MAC_HOST`, `REMOTE_HOST` and `MAC_ZED_BIN`. env vars override it:
+`~/.config/remote-zed-opener/config` holds `MAC_HOST`, `REMOTE_HOST`, `MAC_ZED_BIN` and `ADD_TO_WINDOW`. env vars override it:
 
 - `ZED_MAC_HOST` - ssh host for the mac on this box (required)
 - `ZED_REMOTE_HOST` - this box's ssh host as seen by the mac (required)
 - `ZED_MAC_BIN` - path to the zed cli on the mac (default: `/usr/local/bin/zed`)
+- `ZED_ADD_TO_WINDOW` - `yes` adds folders to the open zed window (`-a`) unless you pass `-n`, `-a` or `-e` (default: `no`)
 
 ## lock it down (optional)
 
