@@ -2,6 +2,7 @@
 # remote-zed-opener: open linux files/folders in zed on your mac, over ssh
 set -euo pipefail
 
+VERSION="1.0.0"
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 # shellcheck source=/dev/null
 [[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
@@ -18,8 +19,8 @@ SSH_OPTS=(-n -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5
   -o ServerAliveInterval=3 -o ServerAliveCountMax=2)
 
 usage() {
+  echo "remote-zed-opener $VERSION - open linux files/folders in zed on your mac"
   cat << 'EOF'
-remote-zed-opener - open linux files/folders in zed on your mac
 
 usage:
   zed [flags] [path ...]   open paths in zed on your mac (default: current dir)
@@ -167,8 +168,14 @@ main() {
   for arg in "$@"; do
     if ((!opts_done)); then
       case $arg in
-        -h | --help) usage && return ;;
-        --setup) setup && return ;;
+        -h | --help)
+          usage
+          return
+          ;;
+        --setup)
+          setup
+          return
+          ;;
         --) opts_done=1 && continue ;;
         --version) version=1 && continue ;;
         -n | --new | -a | --add | -e | --existing | -w | --wait) flags+=("$arg") && continue ;;

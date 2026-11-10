@@ -15,7 +15,7 @@ you are on the linux box and cannot change the mac: ask me to do the mac steps.
 
 1. ask me to confirm on the mac: remote login is on (system settings -> general -> sharing -> remote login), the zed cli is installed (zed command palette: "cli: install cli binary"), and the mac's ~/.ssh/config has an alias for this linux box (e.g. hetzner).
 2. check that this box reaches the mac without a password: `ssh -o BatchMode=yes <mac alias> echo ok` (e.g. macbook). if it fails, help me set up a key and a Host block on this box.
-3. install: curl -fsSL https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/install.sh | bash
+3. install: curl -fsSL https://github.com/yigitkonur/remote-zed-opener/releases/latest/download/install.sh | bash
 4. without a terminal for the setup questions, write ~/.config/remote-zed-opener/config yourself:
    MAC_HOST=<the mac's alias on this box>
    REMOTE_HOST=<this box's alias on the mac>
@@ -54,10 +54,12 @@ both ssh hops are kept warm, so only the first open of the day pays for an ssh l
 run this on your remote linux server:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/install.sh | bash
+curl -fsSL https://github.com/yigitkonur/remote-zed-opener/releases/latest/download/install.sh | bash
 ```
 
-it puts `zed` in `~/.local/bin/zed` and asks three setup questions on your terminal (an existing config is kept). it refuses to overwrite a `zed` that isn't this script, such as the zed editor's own linux cli.
+it installs the latest [release](https://github.com/yigitkonur/remote-zed-opener/releases) to `~/.local/bin/zed` and asks three setup questions on your terminal (an existing config is kept). run the same command again to upgrade. it refuses to overwrite a `zed` that isn't this script, such as the zed editor's own linux cli.
+
+to pin a version, swap `latest/download` for `download/v1.0.0`. what changed in each release: [CHANGELOG.md](CHANGELOG.md).
 
 ---
 
@@ -141,7 +143,7 @@ this creates `/usr/local/bin/zed` on your mac. installed zed with homebrew inste
 run the installer on your linux box:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/install.sh | bash
+curl -fsSL https://github.com/yigitkonur/remote-zed-opener/releases/latest/download/install.sh | bash
 ```
 
 it asks three questions:
