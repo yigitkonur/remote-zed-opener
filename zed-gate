@@ -1,0 +1,86 @@
+#!/bin/bash
+# zed-gate: optional forced command for the linux box's key, runs on the mac.
+# lets the key open ssh://<alias>/... paths in zed and keep zed's connection warm, nothing else.
+# install: copy to the mac (e.g. ~/.local/bin/zed-gate), chmod 755, set ZED and ALIASES below,
+# then prefix the linux box's key in ~/.ssh/authorized_keys with
+#   restrict,command="/Users/<you>/.local/bin/zed-gate"
+# written for macOS /bin/bash 3.2; never evals, decodes the shim's quoting by hand.
+set -u
+ZED=/usr/local/bin/zed # must equal MAC_ZED_BIN on the linux box
+ALIASES="hetzner"      # the linux boxes' aliases in the mac's ~/.ssh/config (space separated)
+
+deny() {
+  echo "zed-gate: denied: $1" >&2
+  exit 126
+}
+
+cmd=${SSH_ORIGINAL_COMMAND-}
+[ -n "$cmd" ] || deny "interactive/empty command"
+[ ${#cmd} -le 8192 ] || deny "command too long"
+[ "$cmd" = "echo ok" ] && { echo ok; exit 0; } # 'zed --setup' connectivity test
+
+# decode: backslash escapes and plain characters only; quotes, $, backtick, ; & | < > ( ),
+# newline and tab are refused
+argv=()
+cur=""
+have=0
+i=0
+n=${#cmd}
+while [ $i -lt $n ]; do
+  c=${cmd:$i:1}
+  case $c in
+    \\)
+      i=$((i + 1))
+      [ $i -lt $n ] || deny "dangling backslash"
+      cur=$cur${cmd:$i:1}
+      have=1
+      ;;
+    ' ')
+      if [ $have = 1 ]; then
+        argv+=("$cur")
+        cur=""
+        have=0
+      fi
+      ;;
+    "'" | '"' | '`' | '$' | ';' | '&' | '|' | '<' | '>' | '(' | ')' | '
+' | '	') deny "unquoted metacharacter" ;;
+    *)
+      cur=$cur$c
+      have=1
+      ;;
+  esac
+  i=$((i + 1))
+done
+[ $have = 1 ] && argv+=("$cur")
+[ ${#argv[@]} -ge 2 ] && [ ${#argv[@]} -le 64 ] || deny "need: $ZED [flags] ssh://<alias>/path"
+
+# the shim's two warm commands, rebuilt here rather than passed through
+for h in $ALIASES; do
+  case "${argv[*]}" in
+    "ssh -O check $h") exec /usr/bin/ssh -O check "$h" ;;
+    "ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o ControlPersist=4h $h true")
+      exec /usr/bin/ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto -o ControlPersist=4h "$h" true
+      ;;
+  esac
+done
+
+[ "${argv[0]}" = "$ZED" ] || deny "only $ZED may be run"
+paths=0
+for a in "${argv[@]:1}"; do
+  case $a in
+    -n | --new | -a | --add | -e | --existing | -w | --wait | --version) ;;
+    -*) deny "flag not allowed: $a" ;;
+    ssh://*)
+      ok=0
+      for h in $ALIASES; do
+        case $a in "ssh://$h/"*) ok=1 ;; esac
+      done
+      [ $ok = 1 ] || deny "ssh host not allowed"
+      paths=$((paths + 1))
+      ;;
+    *) deny "only ssh://<alias>/... paths allowed" ;;
+  esac
+done
+[ $paths -ge 1 ] || [ "${argv[*]}" = "$ZED --version" ] || deny "no ssh:// path given"
+
+exec "$ZED" "${argv[@]:1}"

@@ -1,111 +1,187 @@
 #!/usr/bin/env bash
-# remote-zed-opener: open remote linux paths on your mac's zed editor over ssh
+# remote-zed-opener: open linux files/folders in zed on your mac, over ssh
 set -euo pipefail
 
 CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
-
-# load config if present
-if [[ -f "$CONFIG_FILE" ]]; then
-  # shellcheck source=/dev/null
-  source "$CONFIG_FILE"
-fi
+# shellcheck source=/dev/null
+[[ -f "$CONFIG_FILE" ]] && source "$CONFIG_FILE"
 
 MAC_HOST="${ZED_MAC_HOST:-${MAC_HOST:-}}"
 REMOTE_HOST="${ZED_REMOTE_HOST:-${REMOTE_HOST:-}}"
 MAC_ZED_BIN="${ZED_MAC_BIN:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
 
-show_usage() {
+# one multiplexed connection to the mac that stays up for 4h after the last call,
+# so only the first call pays the ssh handshake. short dir: socket paths max out near 104 bytes
+CTL_DIR="${XDG_RUNTIME_DIR:-$HOME/.cache}/rzo"
+SSH_OPTS=(-n -o BatchMode=yes -o LogLevel=ERROR -o ConnectTimeout=5
+  -o ControlMaster=auto -o "ControlPath=$CTL_DIR/%C" -o ControlPersist=4h
+  -o ServerAliveInterval=5 -o ServerAliveCountMax=2)
+
+usage() {
   cat << 'EOF'
 remote-zed-opener - open linux files/folders in zed on your mac
 
 usage:
-  zed [path ...]       open file or folder in zed (defaults to current dir)
-  zed -n [path ...]    open in a new zed window
-  zed --setup          configure mac ssh host and remote host name
-  zed --help           show this help message
+  zed [flags] [path ...]   open paths in zed on your mac (default: current dir)
+  zed --setup              configure the mac ssh host and this box's alias
+  zed --help               show this help
+
+flags passed on to zed: -n/--new, -a/--add, -e/--existing, -w/--wait, --version
 EOF
 }
 
-setup_config() {
+die() {
+  echo "remote-zed-opener: $1" >&2
+  exit "${2:-1}"
+}
+
+mac_ssh() {
+  mkdir -p "$CTL_DIR" && chmod 700 "$CTL_DIR"
+  ssh "${SSH_OPTS[@]}" -- "$MAC_HOST" "$@"
+}
+
+# the mac's login shell parses the command, so every word is quoted; a leading ~/
+# on the zed path stays unquoted so it expands there
+# shellcheck disable=SC2088
+mac_cmd() {
+  local bin=$MAC_ZED_BIN prefix="" cmd
+  if [[ $bin == '~/'* ]]; then
+    prefix='~/'
+    bin=${bin#'~/'}
+  fi
+  cmd=$(printf '%q ' "$bin" "$@")
+  printf '%s%s' "$prefix" "${cmd% }"
+}
+
+run_on_mac() {
+  local rc=0 had_master=0
+  ssh -o "ControlPath=$CTL_DIR/%C" -O check -- "$MAC_HOST" 2> /dev/null && had_master=1
+  mac_ssh "$1" || rc=$?
+  if ((rc == 255 && had_master)); then
+    # the kept-alive connection went stale (mac slept, network changed): drop it, retry once
+    ssh -o "ControlPath=$CTL_DIR/%C" -O exit -- "$MAC_HOST" > /dev/null 2>&1 || true
+    rc=0
+    mac_ssh "$1" || rc=$?
+  fi
+  case $rc in
+    0) ;;
+    255) die "could not reach $MAC_HOST over ssh (is the mac awake and reachable?)" 255 ;;
+    127) die "no zed cli at $MAC_ZED_BIN on $MAC_HOST; run 'zed --setup' to set the path" 127 ;;
+    *) die "zed on $MAC_HOST exited with $rc" "$rc" ;;
+  esac
+}
+
+# zed on the mac reuses a live ssh master at the ControlPath the mac's ssh config
+# gives REMOTE_HOST and then skips the handshake. keep one such master up (4h after
+# last use); if the mac has no ControlPath for the host, nothing is opened.
+warm_zed_side() {
+  local out
+  [[ $REMOTE_HOST == *:* ]] && return
+  out=$(mac_ssh "$(printf '%q ' ssh -O check "$REMOTE_HOST")" 2>&1) && return
+  [[ $out == *"No ControlPath"* ]] && return
+  mac_ssh "$(printf '%q ' ssh -o BatchMode=yes -o ConnectTimeout=5 -o ControlMaster=auto \
+    -o ControlPersist=4h "$REMOTE_HOST" true)"
+}
+
+ask() {
+  local answer
+  read -r -p "$2 [$3]: " answer ||
+    die "--setup needs a terminal; or write $CONFIG_FILE with MAC_HOST, REMOTE_HOST and MAC_ZED_BIN"
+  printf -v "$1" '%s' "${answer:-$3}"
+}
+
+setup() {
   echo "--- remote-zed-opener setup ---"
-  echo "this configures how your linux box talks back to your mac."
+  echo "this configures how this linux box talks back to your mac."
   echo ""
-
-  read -r -p "mac ssh host (alias in ~/.ssh/config on this linux machine) [${MAC_HOST:-macbook}]: " input_mac
-  MAC_HOST="${input_mac:-${MAC_HOST:-macbook}}"
-
-  read -r -p "remote host name (alias in ~/.ssh/config on your mac) [${REMOTE_HOST:-$(hostname)}]: " input_remote
-  REMOTE_HOST="${input_remote:-${REMOTE_HOST:-$(hostname)}}"
-
-  read -r -p "zed binary path on your mac [${MAC_ZED_BIN:-/usr/local/bin/zed}]: " input_bin
-  MAC_ZED_BIN="${input_bin:-${MAC_ZED_BIN:-/usr/local/bin/zed}}"
+  ask MAC_HOST "mac ssh host (alias in ~/.ssh/config on this linux box)" "${MAC_HOST:-macbook}"
+  ask REMOTE_HOST "this box's alias in ~/.ssh/config on your mac" "${REMOTE_HOST:-$HOSTNAME}"
+  ask MAC_ZED_BIN "zed cli path on your mac" "$MAC_ZED_BIN"
+  [[ $MAC_HOST =~ ^[A-Za-z0-9._@-]+$ ]] || die "invalid mac ssh host: $MAC_HOST"
+  [[ $REMOTE_HOST =~ ^[A-Za-z0-9._@-]+(:[0-9]+)?$ ]] || die "invalid remote host: $REMOTE_HOST"
 
   mkdir -p "$(dirname "$CONFIG_FILE")"
-  cat > "$CONFIG_FILE" << EOF
-MAC_HOST="$MAC_HOST"
-REMOTE_HOST="$REMOTE_HOST"
-MAC_ZED_BIN="$MAC_ZED_BIN"
-EOF
+  printf 'MAC_HOST=%q\nREMOTE_HOST=%q\nMAC_ZED_BIN=%q\n' \
+    "$MAC_HOST" "$REMOTE_HOST" "$MAC_ZED_BIN" > "$CONFIG_FILE"
 
   echo ""
   echo "config saved to $CONFIG_FILE"
-  echo "testing ssh connection to $MAC_HOST..."
-  if ssh -o BatchMode=yes -o ConnectTimeout=5 -o LogLevel=ERROR "$MAC_HOST" "echo ok" >/dev/null 2>&1; then
-    echo "ssh to $MAC_HOST worked!"
+  echo "testing ssh to $MAC_HOST..."
+  if mac_ssh echo ok > /dev/null 2>&1; then
+    echo "ssh to $MAC_HOST works."
   else
-    echo "warning: ssh to $MAC_HOST failed. make sure passwordless ssh is working."
+    echo "warning: ssh to $MAC_HOST failed. run 'ssh $MAC_HOST' once by hand: it must log in without a password."
   fi
 }
 
-if [[ "${1:-}" == "--help" || "${1:-}" == "-h" ]]; then
-  show_usage
-  exit 0
-fi
+require_config() {
+  [[ -n $MAC_HOST && -n $REMOTE_HOST ]] && return
+  [[ -t 0 ]] || die "not configured: run 'zed --setup', or set ZED_MAC_HOST and ZED_REMOTE_HOST (or MAC_HOST and REMOTE_HOST in $CONFIG_FILE)"
+  setup
+}
 
-if [[ "${1:-}" == "--setup" ]]; then
-  setup_config
-  exit 0
-fi
-
-if [[ -z "$MAC_HOST" || -z "$REMOTE_HOST" ]]; then
-  if [[ -t 0 ]]; then
-    setup_config
-  else
-    echo "error: remote-zed-opener is not configured." >&2
-    echo "run 'zed --setup' or set MAC_HOST and REMOTE_HOST in $CONFIG_FILE" >&2
-    exit 1
+# absolute path without . or .. segments; paths that don't exist yet (or carry
+# :line:col) are kept as typed under their resolved parent
+abs_path() {
+  local p=$1 dir
+  if [[ -d $p ]]; then
+    (cd -- "$p" && pwd -P)
+    return
   fi
-fi
-
-args=()
-paths=0
-
-for arg in "$@"; do
-  if [[ "$arg" == -* ]]; then
-    args+=("$arg")
-    continue
+  dir=$(dirname -- "$p")
+  if [[ -d $dir ]]; then
+    dir=$(cd -- "$dir" && pwd -P)
+  elif [[ $p != /* ]]; then
+    dir="$(pwd -P)/$dir"
   fi
+  printf '%s/%s' "${dir%/}" "$(basename -- "$p")"
+}
 
-  # resolve relative path to absolute path
-  if [[ -e "$arg" ]]; then
-    abs=$(cd -- "$(dirname -- "$arg")" 2>/dev/null && printf '%s/%s' "$(pwd -P)" "$(basename -- "$arg")")
-  else
-    # path doesn't exist yet, handle gracefully
-    if [[ "$arg" == /* ]]; then
-      abs="$arg"
-    else
-      abs="$(pwd -P)/$arg"
+# zed parses the ssh:// argument as a url and percent-decodes the path, so encode
+# everything a url would eat (%, #, ?, spaces, non-ascii); bytes masked for bash 3.2
+url_path() {
+  local LC_ALL=C s=$1 out="" c i
+  for ((i = 0; i < ${#s}; i++)); do
+    c=${s:i:1}
+    case $c in
+      [A-Za-z0-9/._~:-]) out+=$c ;;
+      *)
+        printf -v c '%%%02X' "'$c"
+        out+=${c:0:1}${c: -2}
+        ;;
+    esac
+  done
+  printf '%s' "$out"
+}
+
+main() {
+  local flags=() paths=() arg opts_done=0 version=0 p
+  for arg in "$@"; do
+    if ((!opts_done)); then
+      case $arg in
+        -h | --help) usage && return ;;
+        --setup) setup && return ;;
+        --) opts_done=1 && continue ;;
+        --version) version=1 && continue ;;
+        -n | --new | -a | --add | -e | --existing | -w | --wait) flags+=("$arg") && continue ;;
+        -*) die "unsupported flag: $arg (supported: -n -a -e -w --version)" 2 ;;
+      esac
     fi
+    paths+=("$(abs_path "$arg")")
+  done
+
+  require_config
+  if ((version)); then
+    run_on_mac "$(mac_cmd --version)"
+  else
+    ((${#paths[@]})) || paths=("$(pwd -P)")
+    # stable zed (1.27) opens one ssh:// url per call, so open each path separately
+    for p in "${paths[@]}"; do
+      run_on_mac "$(mac_cmd ${flags[@]+"${flags[@]}"} "ssh://${REMOTE_HOST}$(url_path "$p")")"
+    done
   fi
+  # after the call, so it rides the connection that call just set up
+  (warm_zed_side < /dev/null > /dev/null 2>&1 &)
+}
 
-  args+=("ssh://${REMOTE_HOST}${abs}")
-  paths=$((paths + 1))
-done
-
-if (( paths == 0 )); then
-  args+=("ssh://${REMOTE_HOST}$(pwd -P)")
-fi
-
-remote_cmd=$(printf '%q ' "$MAC_ZED_BIN" "${args[@]}")
-
-exec ssh -o BatchMode=yes -o LogLevel=ERROR "$MAC_HOST" "$remote_cmd"
+main "$@"
