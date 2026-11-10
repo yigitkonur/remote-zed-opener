@@ -2,40 +2,53 @@
 # installer for remote-zed-opener
 set -euo pipefail
 
-REPO="yigitkonur/remote-zed-opener"
-BRANCH="main"
-RAW_URL="https://raw.githubusercontent.com/${REPO}/${BRANCH}/zed"
-
+RAW_URL="https://raw.githubusercontent.com/yigitkonur/remote-zed-opener/main/zed"
 INSTALL_DIR="${INSTALL_DIR:-$HOME/.local/bin}"
+TARGET="$INSTALL_DIR/zed"
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/remote-zed-opener/config"
 
 echo "installing remote-zed-opener..."
-
 mkdir -p "$INSTALL_DIR"
 
-if [[ -f "./zed" ]]; then
-  cp ./zed "$INSTALL_DIR/zed"
-else
-  curl -fsSL "$RAW_URL" -o "$INSTALL_DIR/zed"
+# never replace someone else's zed, e.g. the zed editor's own linux cli (or a
+# dangling link to it)
+if [[ -e $TARGET || -L $TARGET ]] && ! grep -q remote-zed-opener "$TARGET" 2> /dev/null; then
+  echo "error: $TARGET exists and is not remote-zed-opener (the zed editor's own cli?)." >&2
+  echo "remove it, or install elsewhere: INSTALL_DIR=/some/dir bash install.sh" >&2
+  exit 1
 fi
 
-chmod +x "$INSTALL_DIR/zed"
+# a checkout installs its own copy; curl | bash downloads. write a temp file and
+# rename it, so an existing file or symlink is replaced rather than written through
+tmp=$(mktemp "$INSTALL_DIR/.zed.XXXXXX")
+trap 'rm -f "$tmp"' EXIT
+src="$(dirname -- "${BASH_SOURCE[0]:-}")/zed"
+if [[ -n ${BASH_SOURCE[0]:-} && -f $src ]] && grep -q remote-zed-opener "$src"; then
+  cp "$src" "$tmp"
+else
+  curl -fsSL "$RAW_URL" -o "$tmp"
+fi
+chmod 755 "$tmp"
+mv -f "$tmp" "$TARGET"
+echo "installed zed to $TARGET"
 
-echo "installed zed to $INSTALL_DIR/zed"
-
-# check path
 case ":$PATH:" in
   *":$INSTALL_DIR:"*) ;;
   *)
     echo ""
-    echo "warning: $INSTALL_DIR is not in your PATH!"
-    echo "add this to your ~/.bashrc or ~/.zshrc:"
-    echo "  export PATH=\"\$HOME/.local/bin:\$PATH\""
+    echo "warning: $INSTALL_DIR is not in your PATH. add this to your ~/.bashrc or ~/.zshrc:"
+    echo "  export PATH=\"$INSTALL_DIR:\$PATH\""
     ;;
 esac
 
 echo ""
-if [[ -t 0 ]]; then
-  "$INSTALL_DIR/zed" --setup
+if [[ -f $CONFIG_FILE ]]; then
+  echo "keeping your config in $CONFIG_FILE (run 'zed --setup' to change it)."
+elif [[ -t 0 ]]; then
+  "$TARGET" --setup
+elif { : < /dev/tty; } 2> /dev/null; then
+  # curl | bash: stdin is the script, so ask on the terminal
+  "$TARGET" --setup < /dev/tty
 else
-  echo "installation complete! run 'zed --setup' to configure your ssh hosts."
+  echo "no terminal: run 'zed --setup', or write $CONFIG_FILE with MAC_HOST, REMOTE_HOST and MAC_ZED_BIN."
 fi
