@@ -2,6 +2,16 @@
 
 All notable changes to remote-zed-opener. Versions follow [semver](https://semver.org).
 
+## [1.1.0] - 2026-11-10
+
+### Added
+
+- **Open folders in the window that's already open.** Zed starts a new remote server for every new window and stops it when the window closes, and there is no way to keep one running (see the README section "why does a new zed window take a few seconds?"). That start took about 2 s on our setup, shown as "starting proxy". A new fourth setup question, or `ADD_TO_WINDOW=yes` / `ZED_ADD_TO_WINDOW=yes`, makes `zed` pass `-a` so folders go into the open Zed window with no server start. Passing `-n`, `-a` or `-e` yourself still wins. The default stays `no`, which keeps Zed's normal behaviour, and existing configs keep working unchanged.
+
+### Docs
+
+- README: why a new Zed window takes a few seconds, what each part costs, and how to avoid it (add to the open window, close dead windows, don't share Zed's ssh `ControlPath` with big transfers).
+
 ## [1.0.0] - 2026-11-10
 
 ### Faster: both ssh hops stay warm
@@ -53,4 +63,5 @@ All notable changes to remote-zed-opener. Versions follow [semver](https://semve
 
 - First version: `zed` shim, `install.sh` and README (untagged).
 
+[1.1.0]: https://github.com/yigitkonur/remote-zed-opener/releases/tag/v1.1.0
 [1.0.0]: https://github.com/yigitkonur/remote-zed-opener/releases/tag/v1.0.0
